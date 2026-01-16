@@ -21,12 +21,12 @@ import random
 
 
 class Environment:
-    def __init__(self, radius=1.0, platform_radius=0.1, speed=0.3, momentum_weight_ratio=3, dt=0.1, timeout=120, timeout_penalty=0):
+    def __init__(self, radius=1.0, platform_radius=0.05, speed=0.3, momentum_weight_ratio=3, dt=0.1, timeout=120, timeout_penalty=0):
         """
         ## Simulation Environment
         ### Default values:
         - radius = **1.0 m** (Pool radius)
-        - platform_radius = **0.1 m** (Platform radius)
+        - platform_radius = **0.05 m** (Platform radius)
         - speed = **0.3 m/s** (Swimming speed)
         - momentum_weight_ratio = **3** (Momentum to control ratio (1:3))
         - dt = **0.1 s** (Time step / seconds per step)
@@ -36,6 +36,7 @@ class Environment:
         ### Environment Description:
         *"We simulated the swimming behavior of a rat in a **2m** diameter circular watermaze,
         which contained a **0.1m** diameter escape platform."*
+        (Note: radius = diameter / 2)
         
         ### Movement Description:
         *"The swimming speed of the rat was constant, at **0.3 m/s**."*
@@ -79,10 +80,10 @@ class Environment:
         
         # Starting locations (N, S, E, W edges)
         self.start_locations = [
-            np.array([0.0, radius * 0.9]),  # North
-            np.array([0.0, -radius * 0.9]), # South
-            np.array([radius * 0.9, 0.0]),  # East
-            np.array([-radius * 0.9, 0.0])  # West
+            np.array([0.0, radius * 0.99]),  # North
+            np.array([0.0, -radius * 0.99]), # South
+            np.array([radius * 0.99, 0.0]),  # East
+            np.array([-radius * 0.99, 0.0])  # West
         ]
 
         # Initialize agent position randomly
@@ -100,6 +101,11 @@ class Environment:
             r = np.random.uniform(0.2 * self.radius, 0.8 * self.radius)
             theta = np.random.uniform(0, 2 * np.pi)
             self.platform_pos = np.array([r * np.cos(theta), r * np.sin(theta)])
+
+    def random_movement_vector(self):
+        """Generates a random movement vector of length step_distance."""
+        angle = np.random.uniform(0, 2 * np.pi)
+        return np.array([np.cos(angle), np.sin(angle)]) * self.step_distance
 
     def reset(self, mode="DMP", start_pos=None):
         """Resets the environment to a starting position."""
@@ -133,12 +139,12 @@ class Environment:
 
     def step(self, action_vector):
         """Takes a step in the environment based on the action vector."""
-        
+        collision_detected = False
         # Update timer
         self.timer += self.dt
         if self.timer >= self.timeout:
             # Timeout reached
-            return self.timeout_penalty, True
+            return self.timeout_penalty, True, False
         
         # Update Move History
         self.move_history.append(self.pos.copy())
@@ -172,6 +178,7 @@ class Environment:
         new_pos = self.pos + final_move
         dist_to_center = np.linalg.norm(new_pos)
         if dist_to_center > self.radius:
+            collision_detected = True
             # Calculate the overshoot distance
             overshoot = dist_to_center - self.radius
             # Calculate collision point on the boundary
@@ -182,7 +189,7 @@ class Environment:
             # Normalize movement vector to get new final move after collision
             final_move = (final_move / np.linalg.norm(final_move)) * self.step_distance
             # New position after reflection using the final move direction, multiplied by the overshoot
-            new_pos = collision_point + final_move * overshoot
+            new_pos = collision_point + (final_move / self.step_distance)  * overshoot
 
         self.pos = new_pos
         self.previous_move_vector = final_move
@@ -197,7 +204,7 @@ class Environment:
             reward = 1
             done = True
             
-        return reward, done
+        return reward, done, collision_detected
     
     def display(self, show_move_history=True, plt_show=True, plt_close=False, show_vector=False, save_path=None, attempted_move=None, return_image=False, title=None):
         """Displays the current state of the environment.
@@ -207,7 +214,8 @@ class Environment:
         If return_image is True, returns the image as a numpy array instead of displaying it.
         """
         
-        fig = plt.figure(figsize=(6, 6))
+        if return_image:
+            fig = plt.figure(figsize=(6, 6))
         circle = plt.Circle((0, 0), self.radius, color='blue', fill=False)
         platform = plt.Circle(self.platform_pos, self.platform_radius, color='green', alpha=0.7, label='Platform')
         plt.gca().add_artist(circle)
@@ -260,7 +268,7 @@ class Environment:
 
 
 class DemoEnv:
-    def __init__(self, radius=1.0, platform_radius=0.1, speed=0.3, momentum_weight_ratio=3, dt=0.1, timeout=120, timeout_penalty=0):
+    def __init__(self, radius=1.0, platform_radius=0.05, speed=0.3, momentum_weight_ratio=3, dt=0.1, timeout=120, timeout_penalty=0):
         self.env = Environment(radius=radius, platform_radius=platform_radius, speed=speed, momentum_weight_ratio=momentum_weight_ratio, dt=dt, timeout=timeout, timeout_penalty=timeout_penalty)
 
     def step_function_demo(self, max_steps=100, fps=10, start_pos=None, move_dir=None, save_path="animation.mp4", title="Environment Demo"):
@@ -281,7 +289,7 @@ class DemoEnv:
             step_count += 1
             if move_dir is None:
                 temp_move_dir = np.random.uniform(-1, 1, size=2)
-            _, done = self.env.step(np.array(temp_move_dir))
+            _, done, _ = self.env.step(np.array(temp_move_dir))
             img_rgb = self.env.display(show_move_history=False, show_vector=True, attempted_move=temp_move_dir, plt_show=False, return_image=True, title=title)
             if img_rgb.shape[2] == 4:
                 img_rgb = img_rgb[:, :, :3]
@@ -302,7 +310,24 @@ class DemoEnv:
 
 class PlaceCells:
     def __init__(self, env, n_cells=493, sigma=0.16):
-        """Hippocampal Place Cells"""
+        """
+        # Hippocampal Place Cells
+
+        ### Default values:
+        - n_cells = **493** (Number of place cells)
+        - sigma = **0.16 m** (Place field width)
+
+        ## Sources from the paper:
+
+        ### Cell Count:
+        *"We consider an ensemble of place cells **(N = 493)** with place 
+        fields distributed in an overlapping manner throughout the maze
+
+        ### Place Field Width (Sigma): 
+        *"...each with width **s = 0.16 m**"*
+
+        ### Source: Foster Morris Dayan. (2000)
+        """
         self.env = env
         self.n_cells = n_cells
         self.sigma = sigma
@@ -395,13 +420,51 @@ class PlaceCells:
 
 
 class TD_Agent:
-    def __init__(self, env, n_cells=493, sigma=0.16, learning_rate=0.02, discount_factor=0.99, lambda_param=0.8):
-        """TD Agent (Actor-Critic)"""
+    def __init__(self, env, n_cells=493, sigma=0.16, actor_lr=0.1, critic_lr=0.01, gamma=0.99, actor_lambda=0.9, critic_lambda=0.9, concussion_amnesia=False):
+        """
+        # TD Agent (Actor-Critic)
+
+        ### Default values:
+        - n_cells = **493** (Number of place cells)
+        - sigma = **0.16 m** (Place field width)
+        - actor_lr = **0.1** (Actor learning rate)
+        - critic_lr = **0.01** (Critic learning rate)
+        - gamma = **0.99** (Discount factor)
+        - actor_lambda = **0.9** (Actor Eligibility trace decay rate)
+        - critic_lambda = **0.9** (Critic Eligibility trace decay rate)
+
+        ## Sources from the paper:
+
+        ### Place Cells:
+        *"We consider an ensemble of place cells **(N = 493)** with place
+        fields distributed in an overlapping manner throughout the maze"*
+
+        ### Place Field Width (Sigma):
+        *"...each with width **s = 0.16 m**"*
+
+        ### Learning Rate:
+        The learning rate is never explicitly specified in the paper, just says this:\n
+        *"Following standard reinforcement learning practice, we use a **fixed
+        learning rate** to avoid slow learning"*
+        Assuming a common value of **0.1** for the actor and **0.01** for the critic here.
+        These values also produced similar results to the paper's figures.
+
+        ### Discount Factor (Gamma):
+        The discount factor is also never explicitly specified in the paper, just says this:\n
+        *"gamma is a constant discounting factor, set such that **0 < gamma < 1**"*
+        Assuming a common value of **0.99** here.
+
+        ### Eligibility Trace Decay Rate (Lambda):
+        *"Simulations confirmed this, and so we set lambda to **0.9**."*
+        
+        ### Source: Foster Morris Dayan. (2000)
+        """
         self.env = env
-        self.alpha = learning_rate 
-        self.gamma = discount_factor
-        self.lambd = lambda_param
-        self.n_cells = n_cells
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.gamma = gamma
+        self.actor_lambda = actor_lambda
+        self.critic_lambda = critic_lambda
         
         # Place Cells
         self.place_cells = PlaceCells(env, n_cells=n_cells, sigma=sigma)
@@ -409,6 +472,9 @@ class TD_Agent:
         # Actor 
         self.actor = Actor(self, n_cells, n_actions=8)
         self.critic = Critic(self, n_cells)
+
+        # Bonus (testing ways to reduce variance in simulations)
+        self.concussion_amnesia = concussion_amnesia
 
     def get_value(self, activation):
         return self.critic.forward(activation)
@@ -419,16 +485,32 @@ class TD_Agent:
     def get_action_vectors(self):
         return self.actor.action_vectors
     
-    def update(self, current_activation, action_idx, delta):
-        # Traces
-        self.critic.update_trace(current_activation, self.gamma, self.lambd)
-        self.actor.update_trace(current_activation, action_idx, self.gamma, self.lambd)
-        # Weights
-        self.critic.update_weights(delta, self.alpha)
-        self.actor.update_weights(delta, self.alpha)
+    def reset_model(self):
+        self.actor.reset_weights()
+        self.critic.reset_weights()
+        self.actor.reset_trace()
+        self.critic.reset_trace()
+    
+    def update(self, current_activation, next_activation, action_idx, reward, done, collision_detected=False):
+        v_curr = self.critic.forward(current_activation)
 
-    def run_trial(self, mode="DMP", max_steps=2000):
+        if done:
+            v_next = 0.0
+        else:
+            v_next = self.critic.forward(next_activation)
+
+        delta = reward + self.gamma * v_next - v_curr
+
+        self.critic.update(delta, self.critic_lr, current_activation, self.gamma, self.critic_lambda)
+        self.actor.update(delta, self.actor_lr, current_activation, action_idx, self.gamma, self.actor_lambda)
+
+        if collision_detected:
+            self.actor.reset_trace()
+            self.critic.reset_trace()
+
+    def run_trial(self, mode="DMP", max_steps=2000, learning=True):
         self.env.reset(mode=mode)
+
         self.actor.reset_trace()
         self.critic.reset_trace()
 
@@ -444,18 +526,18 @@ class TD_Agent:
 
             # Move
             prev_pos = self.env.pos.copy()
-            reward, done = self.env.step(action_vec)
+            reward, done, collision_detected = self.env.step(action_vec)
             path_length += np.linalg.norm(self.env.pos - prev_pos)
 
             # TD Critic Error Calculation
             next_activation = self.place_cells.get_activation(self.env.pos)
-            v_curr = self.critic.forward(current_activation)
-            v_next = self.critic.forward(next_activation)
-
-            delta = reward + self.gamma * v_next - v_curr
 
             # Update
-            self.update(current_activation, action_idx, delta)
+            if learning:
+                if self.concussion_amnesia:
+                    self.update(current_activation, next_activation, action_idx, reward, done, collision_detected)
+                else:
+                    self.update(current_activation, next_activation, action_idx, reward, done, False)
 
             current_activation = next_activation
             steps += 1
@@ -477,6 +559,8 @@ class TD_Agent:
         return results
     
     def run_experiment(self, trials_by_day=["RMW"]*9, trials_per_day=4):
+        # Reset agent (weights & traces) before experiment
+        self.reset_model()
         all_results = []
         for day_mode in trials_by_day:
             day_results = self.run_day(mode=day_mode, trials_per_day=trials_per_day)
@@ -535,20 +619,40 @@ class TD_Agent:
         # Day ticks
         major_ticks = [(day * (trials_per_day + space_between_days)) + trials_per_day / 2 for day in range(day_count)]
         plt.xticks(major_ticks, [str(day + 1) for day in range(day_count)])
+        plt.yticks([5*i for i in range(0, 8)], [str(5*i) for i in range(0, 8)])
         plt.xlabel("Day")
         plt.ylabel("Path Length (m)")
+        plt.ylim(0, 36)
 
         # Trial ticks
-        plt.gca().set_xticks(x_positions, minor=True)
+        ax = plt.gca()
+        ax.set_xticks(x_positions, minor=True)
+        ax.tick_params(axis="x", which="both", direction="in")
 
-        plt.grid(visible=True, which='both', axis='x', linestyle='--', alpha=0.5)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+        #plt.grid(visible=True, which='both', axis='x', linestyle='--', alpha=0.5)
         plt.title(f"Figure 4a: Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
         if plt_show:
             plt.show()
 
 class Actor:
-    # TODO fix/verify the implementation of the Actor class (Paper page 5)
     def __init__(self, agent, n_inputs, n_actions=8):
+        """
+        # Actor Component
+
+        ### Default values:
+        - n_actions = **8** (Number of possible movement directions)
+
+        ## Sources from the paper:
+        ### Action Directions:
+        *"For convenience, the rat is allowed to move in one of
+        **eight** possible directions at each time step (e.g., north, northeast, east)"*
+
+        
+        ### Source: Foster Morris Dayan. (2000)
+        """
         self.agent = agent
         self.n_inputs = n_inputs
 
@@ -560,6 +664,7 @@ class Actor:
 
         angles = np.linspace(0, 2*np.pi, self.n_actions, endpoint=False)
         self.action_vectors = np.array([[np.cos(a), np.sin(a)] for a in angles])
+
         self.trace = np.zeros((n_inputs, n_actions))
 
     def forward(self, place_activation):
@@ -567,8 +672,12 @@ class Actor:
 
     def get_action_probabilities(self, place_activation):
         action_values = self.forward(place_activation)
+        # TODO : Check if we need to prevent overflow here, paper says nothing about it but i get the error sometimes
+        max_av = np.max(action_values)
+        action_values -= max_av  # prevents overflow error
         # Formula (Equation 9, Page 5)
-        probabilities = np.exp(2*action_values) / np.sum(np.exp(2*action_values))
+        e_2av = np.exp(2*action_values)
+        probabilities = e_2av / np.sum(e_2av)
         return probabilities, action_values
     
     def select_action(self, place_activation):
@@ -576,20 +685,26 @@ class Actor:
         action_idx = np.random.choice(self.n_actions, p=probs)
         action_vec = self.action_vectors[action_idx]
         return action_vec, action_idx
-
-    def update_trace(self, place_activation, action_idx, gamma, lambd):
-        self.trace *= (gamma * lambd)
-        self.trace[:, action_idx] += place_activation
-
-    def update_weights(self, delta, learning_rate):
-        self.weights += learning_rate * delta * self.trace
+    
+    def reset_weights(self):
+        self.weights = np.zeros((self.n_inputs, self.n_actions))
 
     def reset_trace(self):
         self.trace = np.zeros((self.n_inputs, self.n_actions))
 
+    def update(self, delta, alpha, place_activation, action_idx, gamma, lambd):
+        # trace
+        self.trace *= (gamma * lambd)
+        self.trace[:, action_idx] += place_activation
+        # clip trace (testing)
+        self.trace = np.clip(self.trace, -10, 10)
+        # weights
+        self.weights += alpha * delta * self.trace
+
     def display_policy(self, grid_size=20, plt_show=True):
-        x = np.linspace(-self.agent.env.radius, self.agent.env.radius, grid_size)
-        y = np.linspace(-self.agent.env.radius, self.agent.env.radius, grid_size)
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
         X, Y = np.meshgrid(x, y)
         U = np.zeros_like(X)
         V = np.zeros_like(Y)
@@ -604,22 +719,28 @@ class Actor:
                 U[i, j] = best_action_vec[0]
                 V[i, j] = best_action_vec[1]
 
-        plt.figure(figsize=(6, 6))
+        #plt.figure(figsize=(6, 6))
         plt.quiver(X, Y, U, V, color='blue', alpha=0.7)
-        circle = plt.Circle((0, 0), self.agent.env.radius, color='blue', fill=False)
+        circle = plt.Circle((0, 0), r, color='blue', fill=False)
         plt.gca().add_artist(circle)
+
+        platform_pos = self.agent.env.platform_pos
+        platform = plt.Circle(platform_pos, self.agent.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
+        plt.gca().add_artist(platform)
+
+        plt.xlim(-r-0.1, r+0.1)
+        plt.ylim(-r-0.1, r+0.1)
         plt.title('Actor Policy Vector Field')
-        plt.scatter(self.agent.env.platform_pos[0], self.agent.env.platform_pos[1], s=200, c='green', label='Platform', alpha=0.5, edgecolors='black')
-        plt.xlim(-self.agent.env.radius-0.1, self.agent.env.radius+0.1)
-        plt.ylim(-self.agent.env.radius-0.1, self.agent.env.radius+0.1)
         plt.gca().set_aspect('equal', adjustable='box')
         if plt_show:
             plt.show()
 
 
 class Critic:
-    # TODO fix/verify the implementation of the Critic class (Paper page 5)
     def __init__(self, agent, n_inputs):
+        """
+        # Critic Component
+        """
         self.agent = agent
         self.n_inputs = n_inputs
         self.weights = np.zeros(n_inputs)
@@ -628,18 +749,24 @@ class Critic:
     def forward(self, place_activation):
         return np.dot(self.weights, place_activation)
     
-    def update_trace(self, place_activation, gamma, lambd):
-        self.trace = (gamma * lambd) * self.trace + place_activation
-
-    def update_weights(self, delta, learning_rate):
-        self.weights += learning_rate * delta * self.trace
+    def reset_weights(self):
+        self.weights = np.zeros(self.n_inputs)
 
     def reset_trace(self):
         self.trace = np.zeros(self.n_inputs)
 
+    def update(self, delta, alpha, place_activation, gamma, lambd):
+        # trace
+        self.trace = gamma * lambd * self.trace + place_activation
+        # clip trace (testing)
+        self.trace = np.clip(self.trace, -10, 10)
+        # weights
+        self.weights += alpha * delta * self.trace
+
     def display_value_function(self, grid_size=100, plt_show=True):
-        x = np.linspace(-self.agent.env.radius, self.agent.env.radius, grid_size)
-        y = np.linspace(-self.agent.env.radius, self.agent.env.radius, grid_size)
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
         X, Y = np.meshgrid(x, y)
         Z = np.zeros_like(X)
 
@@ -649,21 +776,343 @@ class Critic:
                 activation = self.agent.place_cells.get_activation(pos)
                 Z[i, j] = self.forward(activation)
 
-        fig = plt.figure(figsize=(6, 6))
         plt.contourf(X, Y, Z, levels=50, cmap='viridis')
-        circle = plt.Circle((0, 0), self.agent.env.radius, color='blue', fill=False)
+
+        circle = plt.Circle((0, 0), r, color='blue', fill=False)
         plt.gca().add_artist(circle)
+
+        platform_pos = self.agent.env.platform_pos
+        platform = plt.Circle(platform_pos, self.agent.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
+        plt.gca().add_artist(platform)
+        
         plt.colorbar(label='Value Function')
         plt.title('Critic Value Function')
-        plt.xlim(-self.agent.env.radius-0.1, self.agent.env.radius+0.1)
-        plt.ylim(-self.agent.env.radius-0.1, self.agent.env.radius+0.1)
+        plt.xlim(-r-0.1, r+0.1)
+        plt.ylim(-r-0.1, r+0.1)
+        # limit z axis between 0 and 1?
+        plt.clim(0, 1)
         plt.gca().set_aspect('equal', adjustable='box')
         if plt_show:
             plt.show()
 
 
+# ==============================================================================
 
+class Coordinates:
+    def __init__(self, agent, n_cells=493, learning_rate=0.01, lambd=0.9):
+        """
+        Learns global X and Y coordinates based on local self-motion.
+        Paper Pages 9-10.
+        """
+        self.agent = agent
+        self.n_cells = n_cells
+        self.lr = learning_rate
+        self.lambd = lambd
+        
+        # Two separate networks for X and Y coordinates
+        self.weights_x = np.zeros(n_cells)
+        self.weights_y = np.zeros(n_cells)
+        
+        self.trace_x = np.zeros(n_cells)
+        self.trace_y = np.zeros(n_cells)
 
+        # Memory of the goal location in the learned coordinate space
+        self.goal_memory = None # Tuple (x_coord, y_coord)
+
+    def get_coordinates(self, place_activation):
+        """Returns predicted [X, Y] for current location."""
+        x = np.dot(self.weights_x, place_activation)
+        y = np.dot(self.weights_y, place_activation)
+        return np.array([x, y])
+
+    def reset_traces(self):
+        self.trace_x = np.zeros(self.n_cells)
+        self.trace_y = np.zeros(self.n_cells)
+
+    def update(self, current_activation, next_activation, real_movement_vector):
+        """
+        TD Learning for Coordinates (Eq 11 & 12).
+        The 'reward' here is the actual physical displacement (real_movement_vector).
+        """
+        # Estimates of current and next positions
+        curr_coords = self.get_coordinates(current_activation) # [x, y]
+        next_coords = self.get_coordinates(next_activation)    # [x, y]
+        
+        # Actual self-motion (Ground Truth)
+        dx_real = real_movement_vector[0]
+        dy_real = real_movement_vector[1]
+
+        # TD Errors for X and Y
+        # delta = Reward + (Discount * Next) - Current
+        # Here Discount is 1.0 (geometry doesn't decay)
+        delta_x = dx_real + next_coords[0] - curr_coords[0]
+        delta_y = dy_real + next_coords[1] - curr_coords[1]
+
+        # Update Traces
+        # The coordinate system uses lambda=0.9 (Page 10)
+        self.trace_x = self.lambd * self.trace_x + current_activation
+        self.trace_y = self.lambd * self.trace_y + current_activation
+
+        # Optional: Clip traces for stability (as discussed)
+        self.trace_x = np.clip(self.trace_x, -5.0, 5.0)
+        self.trace_y = np.clip(self.trace_y, -5.0, 5.0)
+
+        # Update Weights
+        self.weights_x += self.lr * delta_x * self.trace_x
+        self.weights_y += self.lr * delta_y * self.trace_y
+
+    def set_goal(self, place_activation):
+        """Memorize the coordinates of the current location as the goal."""
+        self.goal_memory = self.get_coordinates(place_activation)
+
+    def get_vector_to_goal(self, place_activation):
+        """
+        Calculates direction vector from current estimated position to remembered goal.
+        Returns: normalized vector, or random vector if no goal memory.
+        """
+        if self.goal_memory is None:
+            # "When there is no goal coordinate in memory... specify random, exploratory actions."
+            rnd = np.random.uniform(-1, 1, 2)
+            return rnd / np.linalg.norm(rnd), False # False = Invalid Goal
+        
+        curr_coords = self.get_coordinates(place_activation)
+        diff = self.goal_memory - curr_coords
+        dist = np.linalg.norm(diff)
+        
+        if dist > 0:
+            return diff / dist, True # True = Valid Goal
+        else:
+            return np.zeros(2), True
+        
+    def display_cell_activity(self, cell_axis, grid_size=100, plt_show=True):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                activation = self.agent.place_cells.get_activation(pos)
+                if cell_axis == 'x':
+                    Z[i, j] = np.dot(self.weights_x, activation)
+                else:
+                    Z[i, j] = np.dot(self.weights_y, activation)
+
+        plt.contourf(X, Y, Z, levels=50, cmap='viridis')
+
+        circle = plt.Circle((0, 0), r, color='blue', fill=False)
+        plt.gca().add_artist(circle)
+
+        platform_pos = self.agent.env.platform_pos
+        platform = plt.Circle(platform_pos, self.agent.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
+        plt.gca().add_artist(platform)
+        
+        plt.colorbar(label=f'Coordinate Cell ({cell_axis.upper()}) Activity')
+        plt.title(f'Coordinate Cell ({cell_axis.upper()}) Activity Map')
+        plt.xlim(-r-0.1, r+0.1)
+        plt.ylim(-r-0.1, r+0.1)
+        plt.gca().set_aspect('equal', adjustable='box')
+        if plt_show:
+            plt.show()
+
+class Coordinate_TD_Agent(TD_Agent):
+    def __init__(self, env, n_cells=493, sigma=0.16, 
+                 actor_lr=0.1, critic_lr=0.01, gamma=0.98, actor_lambda=0.9, critic_lambda=0.9,
+                 coord_lr=0.01, coord_lambd=0.9):
+        
+        # Initialize standard TD Agent components
+        super().__init__(env, n_cells, sigma, actor_lr, critic_lr, gamma, actor_lambda=actor_lambda, critic_lambda=critic_lambda)
+        
+        # Override Actor to have 9 actions (8 Directions + 1 Coordinate Action)
+        self.actor = Actor(self, n_cells, n_actions=9)
+        
+        # Initialize Coordinate System
+        self.coord_system = Coordinates(self, n_cells, learning_rate=coord_lr, lambd=coord_lambd)
+
+    def run_trial(self, mode="DMP", max_steps=2000, learning=True):
+        # DMP Rule: If starting a new problem (Platform moved), goal memory is invalid.
+        # However, the paper says "At certain times... no remembered goal... on DMP, every time the rat... finds it to be moved".
+        # We simulate this by wiping memory if we are in a mode where platform location is unknown until found.
+        # For simplicity in this function: 
+        # If the platform moved physically, the old coordinates point to the WRONG spot. 
+        # The agent must realize the platform is gone.
+        # Implementing the "Interference" mechanic:
+        # We DO NOT wipe goal memory automatically. We let the agent swim to the old goal, 
+        # realize it's not there, and then maybe wipe it?
+        # Actually, Steele & Morris protocol: The rat is placed in the pool.
+        # For this simulation, we will assume:
+        # 1. First trial of a new Day (DMP): Agent might have old memory or None.
+        # 2. If it hits the platform, it Updates the memory.
+        
+        self.env.reset(mode=mode)
+        self.actor.reset_trace()
+        self.critic.reset_trace()
+        self.coord_system.reset_traces()
+
+        steps = 0
+        path_length = 0
+        done = False
+
+        current_activation = self.place_cells.get_activation(self.env.pos)
+
+        while not done and steps < max_steps:
+            # 1. Actor Selection
+            # The Actor outputs 9 probs. 
+            # 0-7: Directional. 8: Coordinate Action.
+            probs, _ = self.actor.get_action_probabilities(current_activation)
+            action_idx = np.random.choice(9, p=probs)
+
+            # 2. Resolve Action to Vector
+            valid_coord_action = False
+            
+            if action_idx < 8:
+                # Standard Direction
+                action_vec = self.actor.action_vectors[action_idx]
+            else:
+                # Coordinate Action (Index 8)
+                coord_vec, is_valid = self.coord_system.get_vector_to_goal(current_activation)
+                action_vec = coord_vec
+                valid_coord_action = is_valid
+
+            # 3. Move
+            prev_pos = self.env.pos.copy()
+            reward, done, _ = self.env.step(action_vec)
+            
+            # Calculate actual movement for Coordinate Learning
+            real_movement = self.env.pos - prev_pos
+            path_length += np.linalg.norm(real_movement)
+
+            # Concussion Protocol (Optional but recommended)
+            if np.linalg.norm(self.env.pos) >= self.env.radius * 0.98:
+                self.actor.reset_trace()
+                self.critic.reset_trace()
+                # self.coord_system.reset_traces() # Coordinate learning shouldn't necessarily break on walls
+
+            # 4. Update
+            next_activation = self.place_cells.get_activation(self.env.pos)
+
+            if learning:
+                # A. Update Coordinate System (Learns Map)
+                self.coord_system.update(current_activation, next_activation, real_movement)
+                
+                # B. Update Actor-Critic (Learns Policy)
+                # Special Case: Page 10 "If... controller specifying random actions... a_coord is not updated"
+                # So if action_idx == 8 and goal memory was None (valid_coord_action is False),
+                # we skip the Actor update for this step (or mask it).
+                
+                if action_idx == 8 and not valid_coord_action:
+                    # Do not update Actor weights for the coordinate action
+                    # Still update Critic? Yes, value of state is independent of action validity.
+                    # We can achieve this by passing a flag or manually handling it.
+                    # Simple hack: Temporarily set alpha to 0 for actor update?
+                    pass 
+                else:
+                    self.update(current_activation, next_activation, action_idx, reward, done)
+
+                # C. Update Goal Memory on Success
+                if done and reward > 0:
+                    self.coord_system.set_goal(next_activation)
+
+            current_activation = next_activation
+            steps += 1
+
+        trial_time = steps * self.env.dt
+        return steps, path_length, trial_time, done
+    
+    
+    def run_day(self, mode="RMW", trials_per_day=4):
+        results = []
+        # If DMP, platform moves at start of day, then stays for 4 trials
+        if mode == "DMP":
+            self.env.set_platform_position()
+        
+        for _ in range(trials_per_day):
+            # Pass RMW here so env doesn't move the platform between trials
+            # (If mode was DMP, we already set the pos above, so we treat trials as RMW relative to that pos)
+            res = self.run_trial(mode="RMW") 
+            results.append(res)
+        return results
+    
+    def run_experiment(self, trials_by_day=["RMW"]*9, trials_per_day=4):
+        # Reset agent (weights & traces) before experiment
+        self.reset_model()
+        all_results = []
+        for day_mode in trials_by_day:
+            day_results = self.run_day(mode=day_mode, trials_per_day=trials_per_day)
+            all_results.append(day_results)
+        return np.array(all_results)
+    
+    def run_figure4(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4):
+        all_simulation_results = []
+        for _ in range(simulation_count):
+            sim_results = self.run_experiment(trials_by_day=trials_by_day, trials_per_day=trials_per_day)
+            all_simulation_results.append(sim_results)
+        return all_simulation_results
+
+    def display_figure4(self, all_simulation_results, plt_show=True):
+        data = np.array(all_simulation_results)
+                
+        simulation_count, day_count, trials_per_day, _ = data.shape
+        path_lengths = data[:, :, :, 1]
+
+        means = np.mean(path_lengths, axis=(0))
+        stds = np.std(path_lengths, axis=(0))
+
+        flat_means = means.flatten()
+        flat_stds = stds.flatten()
+
+        # x axis positions for space between days
+        plt.figure(figsize=(12, 6))
+        space_between_days = 3
+        x_positions = []
+        day_positions = []
+
+        # Generate x_positions for each trial and group them by day
+        for day in range(day_count):
+            day_x_positions = []
+            for trial in range(trials_per_day):
+                pos = day * (trials_per_day + space_between_days) + trial + 1
+                x_positions.append(pos)
+                day_x_positions.append(pos)
+            day_positions.append(day_x_positions)
+
+        # Plot each day's data separately with error bars
+        for day, day_x_positions in enumerate(day_positions):
+            plt.plot(day_x_positions, flat_means[day * trials_per_day:(day + 1) * trials_per_day], 
+                    marker='o', color="black")
+            plt.errorbar(
+                day_x_positions,
+                flat_means[day * trials_per_day:(day + 1) * trials_per_day],
+                yerr=flat_stds[day * trials_per_day:(day + 1) * trials_per_day],
+                fmt='o',
+                color="black",
+                ecolor="gray",
+                capsize=5,
+                alpha=0.5
+            )
+
+        # Day ticks
+        major_ticks = [(day * (trials_per_day + space_between_days)) + trials_per_day / 2 for day in range(day_count)]
+        plt.xticks(major_ticks, [str(day + 1) for day in range(day_count)])
+        plt.yticks([5*i for i in range(0, 8)], [str(5*i) for i in range(0, 8)])
+        plt.xlabel("Day")
+        plt.ylabel("Path Length (m)")
+        plt.ylim(0, 36)
+
+        # Trial ticks
+        ax = plt.gca()
+        ax.set_xticks(x_positions, minor=True)
+        ax.tick_params(axis="x", which="both", direction="in")
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+        #plt.grid(visible=True, which='both', axis='x', linestyle='--', alpha=0.5)
+        plt.title(f"Figure 4a: Coordinate System + Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
+        if plt_show:
+            plt.show()
 
 
 
