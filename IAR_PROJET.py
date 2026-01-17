@@ -574,7 +574,7 @@ class TD_Agent:
             all_simulation_results.append(sim_results)
         return all_simulation_results
 
-    def display_figure4(self, all_simulation_results, plt_show=True):
+    def display_figure4(self, all_simulation_results, plt_show=True, title=None):
         data = np.array(all_simulation_results)
                 
         simulation_count, day_count, trials_per_day, _ = data.shape
@@ -633,7 +633,10 @@ class TD_Agent:
         ax.spines['right'].set_visible(False)
 
         #plt.grid(visible=True, which='both', axis='x', linestyle='--', alpha=0.5)
-        plt.title(f"Figure 4a: Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
+        if title is not None:
+            plt.title(title)
+        else:
+            plt.title(f"Figure 4: Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
         if plt_show:
             plt.show()
 
@@ -670,13 +673,14 @@ class Actor:
     def forward(self, place_activation):
         return np.dot(place_activation, self.weights)
 
-    def get_action_probabilities(self, place_activation):
+    def get_action_probabilities(self, place_activation, temperature=2):
+        # Paper gives the temprature value 2 in the formulas
         action_values = self.forward(place_activation)
-        # TODO : Check if we need to prevent overflow here, paper says nothing about it but i get the error sometimes
+        # Not 100% sure if we need to prevent overflow here, paper says nothing about it but i get the error sometimes when running
         max_av = np.max(action_values)
         action_values -= max_av  # prevents overflow error
         # Formula (Equation 9, Page 5)
-        e_2av = np.exp(2*action_values)
+        e_2av = np.exp(temperature*action_values)
         probabilities = e_2av / np.sum(e_2av)
         return probabilities, action_values
     
@@ -701,7 +705,7 @@ class Actor:
         # weights
         self.weights += alpha * delta * self.trace
 
-    def display_policy(self, grid_size=20, plt_show=True):
+    def display_policy(self, grid_size=20, plt_show=True, title=None):
         r = self.agent.env.radius
         x = np.linspace(-r, r, grid_size)
         y = np.linspace(-r, r, grid_size)
@@ -730,7 +734,10 @@ class Actor:
 
         plt.xlim(-r-0.1, r+0.1)
         plt.ylim(-r-0.1, r+0.1)
-        plt.title('Actor Policy Vector Field')
+        if title is not None:
+            plt.title(title)
+        else:
+            plt.title('Actor Policy Vector Field')
         plt.gca().set_aspect('equal', adjustable='box')
         if plt_show:
             plt.show()
@@ -845,8 +852,8 @@ class Coordinates:
         # TD Errors for X and Y
         # delta = Reward + (Discount * Next) - Current
         # Here Discount is 1.0 (geometry doesn't decay)
-        delta_x = dx_real + next_coords[0] - curr_coords[0]
-        delta_y = dy_real + next_coords[1] - curr_coords[1]
+        delta_x = -dx_real + next_coords[0] - curr_coords[0]
+        delta_y = -dy_real + next_coords[1] - curr_coords[1]
 
         # Update Traces
         # The coordinate system uses lambda=0.9 (Page 10)
@@ -913,14 +920,50 @@ class Coordinates:
         plt.title(f'Coordinate Cell ({cell_axis.upper()}) Activity Map')
         plt.xlim(-r-0.1, r+0.1)
         plt.ylim(-r-0.1, r+0.1)
+        plt.clim(-1, 1)
         plt.gca().set_aspect('equal', adjustable='box')
         if plt_show:
             plt.show()
 
+    def display_ideal_cell_activity(self, cell_axis, grid_size=100, plt_show=True):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                if cell_axis == 'x':
+                    Z[i, j] = pos[0]
+                else:
+                    Z[i, j] = pos[1]
+
+        plt.contourf(X, Y, Z, levels=50, cmap='viridis')
+
+        circle = plt.Circle((0, 0), r, color='blue', fill=False)
+        plt.gca().add_artist(circle)
+
+        platform_pos = self.agent.env.platform_pos
+        platform = plt.Circle(platform_pos, self.agent.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
+        plt.gca().add_artist(platform)
+        
+        plt.colorbar(label=f'Ideal Coordinate ({cell_axis.upper()}) Value')
+        plt.title(f'Ideal Coordinate ({cell_axis.upper()}) Map')
+        plt.xlim(-r-0.1, r+0.1)
+        plt.ylim(-r-0.1, r+0.1)
+        plt.clim(-1, 1)
+        plt.gca().set_aspect('equal', adjustable='box')
+        if plt_show:
+            plt.show()
+
+
+
 class Coordinate_TD_Agent(TD_Agent):
     def __init__(self, env, n_cells=493, sigma=0.16, 
                  actor_lr=0.1, critic_lr=0.01, gamma=0.98, actor_lambda=0.9, critic_lambda=0.9,
-                 coord_lr=0.01, coord_lambd=0.9):
+                 coord_lr=0.01, coord_lambda=0.9):
         
         # Initialize standard TD Agent components
         super().__init__(env, n_cells, sigma, actor_lr, critic_lr, gamma, actor_lambda=actor_lambda, critic_lambda=critic_lambda)
@@ -929,7 +972,7 @@ class Coordinate_TD_Agent(TD_Agent):
         self.actor = Actor(self, n_cells, n_actions=9)
         
         # Initialize Coordinate System
-        self.coord_system = Coordinates(self, n_cells, learning_rate=coord_lr, lambd=coord_lambd)
+        self.coord_system = Coordinates(self, n_cells, learning_rate=coord_lr, lambd=coord_lambda)
 
     def run_trial(self, mode="DMP", max_steps=2000, learning=True):
         # DMP Rule: If starting a new problem (Platform moved), goal memory is invalid.
@@ -985,10 +1028,10 @@ class Coordinate_TD_Agent(TD_Agent):
             path_length += np.linalg.norm(real_movement)
 
             # Concussion Protocol (Optional but recommended)
-            if np.linalg.norm(self.env.pos) >= self.env.radius * 0.98:
-                self.actor.reset_trace()
-                self.critic.reset_trace()
-                # self.coord_system.reset_traces() # Coordinate learning shouldn't necessarily break on walls
+            #if np.linalg.norm(self.env.pos) >= self.env.radius * 0.98:
+            #    self.actor.reset_trace()
+            #    self.critic.reset_trace()
+            #    # self.coord_system.reset_traces() # Coordinate learning shouldn't necessarily break on walls
 
             # 4. Update
             next_activation = self.place_cells.get_activation(self.env.pos)
@@ -1044,14 +1087,14 @@ class Coordinate_TD_Agent(TD_Agent):
             all_results.append(day_results)
         return np.array(all_results)
     
-    def run_figure4(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4):
+    def run_figure8(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4):
         all_simulation_results = []
         for _ in range(simulation_count):
             sim_results = self.run_experiment(trials_by_day=trials_by_day, trials_per_day=trials_per_day)
             all_simulation_results.append(sim_results)
         return all_simulation_results
 
-    def display_figure4(self, all_simulation_results, plt_show=True):
+    def display_figure8(self, all_simulation_results, plt_show=True, title=None):
         data = np.array(all_simulation_results)
                 
         simulation_count, day_count, trials_per_day, _ = data.shape
@@ -1110,7 +1153,10 @@ class Coordinate_TD_Agent(TD_Agent):
         ax.spines['right'].set_visible(False)
 
         #plt.grid(visible=True, which='both', axis='x', linestyle='--', alpha=0.5)
-        plt.title(f"Figure 4a: Coordinate System + Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
+        if title is not None:
+            plt.title(title)
+        else:
+            plt.title(f"Figure 8: Coordinate System + Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
         if plt_show:
             plt.show()
 
