@@ -508,7 +508,7 @@ class TD_Agent:
             self.actor.reset_trace()
             self.critic.reset_trace()
 
-    def run_trial(self, mode="DMP", max_steps=2000, learning=True):
+    def run_trial(self, mode="DMP", max_steps=2000, learning=True, use_argmax=False):
         self.env.reset(mode=mode)
 
         self.actor.reset_trace()
@@ -522,7 +522,7 @@ class TD_Agent:
 
         while not done and steps < max_steps:
             # Actor 
-            action_vec, action_idx = self.actor.select_action(current_activation)
+            action_vec, action_idx = self.actor.select_action(current_activation, use_argmax=use_argmax)
 
             # Move
             prev_pos = self.env.pos.copy()
@@ -545,7 +545,7 @@ class TD_Agent:
         trial_time = steps * self.env.dt
         return steps, path_length, trial_time, done
     
-    def run_day(self, mode="RMW", trials_per_day=4):
+    def run_day(self, mode="RMW", trials_per_day=4, use_argmax=False):
         results = []
         # If DMP, platform moves at start of day, then stays for 4 trials
         if mode == "DMP":
@@ -554,23 +554,23 @@ class TD_Agent:
         for _ in range(trials_per_day):
             # Pass RMW here so env doesn't move the platform between trials
             # (If mode was DMP, we already set the pos above, so we treat trials as RMW relative to that pos)
-            res = self.run_trial(mode="RMW") 
+            res = self.run_trial(mode="RMW", use_argmax=use_argmax)
             results.append(res)
         return results
     
-    def run_experiment(self, trials_by_day=["RMW"]*9, trials_per_day=4):
+    def run_experiment(self, trials_by_day=["RMW"]*9, trials_per_day=4, use_argmax=False):
         # Reset agent (weights & traces) before experiment
         self.reset_model()
         all_results = []
         for day_mode in trials_by_day:
-            day_results = self.run_day(mode=day_mode, trials_per_day=trials_per_day)
+            day_results = self.run_day(mode=day_mode, trials_per_day=trials_per_day, use_argmax=use_argmax)
             all_results.append(day_results)
         return np.array(all_results)
     
-    def run_figure4(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4):
+    def run_figure4(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4, use_argmax=False):
         all_simulation_results = []
         for _ in range(simulation_count):
-            sim_results = self.run_experiment(trials_by_day=trials_by_day, trials_per_day=trials_per_day)
+            sim_results = self.run_experiment(trials_by_day=trials_by_day, trials_per_day=trials_per_day, use_argmax=use_argmax)
             all_simulation_results.append(sim_results)
         return all_simulation_results
 
@@ -605,10 +605,19 @@ class TD_Agent:
         for day, day_x_positions in enumerate(day_positions):
             plt.plot(day_x_positions, flat_means[day * trials_per_day:(day + 1) * trials_per_day], 
                     marker='o', color="black")
+            # I spent days trying to figure out why the error bars looked different than the paper's figure
+            # even though i implemented the TD Agent exactly as described in the paper.
+            # Finally figured it out, it's because of the error bars calculation, not the agent itself.
+            # The paper uses "Standard Error of the Mean" for error bars
+            # SEotM = std / sqrt(N)
+            # "For each data point, the mean and standard error in the mean
+            # are obtained from 1,000 simulation runs."
+            # (Page 7, Fİgure 4 Caption)
+            SEotM = flat_stds[day * trials_per_day:(day+1) * trials_per_day] / np.sqrt(simulation_count)
             plt.errorbar(
                 day_x_positions,
                 flat_means[day * trials_per_day:(day + 1) * trials_per_day],
-                yerr=flat_stds[day * trials_per_day:(day + 1) * trials_per_day],
+                yerr=SEotM,
                 fmt='o',
                 color="black",
                 ecolor="gray",
@@ -673,19 +682,23 @@ class Actor:
     def forward(self, place_activation):
         return np.dot(place_activation, self.weights)
 
-    def get_action_probabilities(self, place_activation, temperature=2):
+    def get_action_probabilities(self, place_activation, use_argmax=False):
         # Paper gives the temprature value 2 in the formulas
         action_values = self.forward(place_activation)
         # Not 100% sure if we need to prevent overflow here, paper says nothing about it but i get the error sometimes when running
         max_av = np.max(action_values)
         action_values -= max_av  # prevents overflow error
         # Formula (Equation 9, Page 5)
-        e_2av = np.exp(temperature*action_values)
+        e_2av = np.exp(2*action_values)
         probabilities = e_2av / np.sum(e_2av)
+        if use_argmax:
+            probabilities = np.zeros_like(probabilities)
+            best_idx = np.argmax(action_values)
+            probabilities[best_idx] = 1.0
         return probabilities, action_values
     
-    def select_action(self, place_activation):
-        probs, _ = self.get_action_probabilities(place_activation)
+    def select_action(self, place_activation, use_argmax=False):
+        probs, _ = self.get_action_probabilities(place_activation, use_argmax=use_argmax)
         action_idx = np.random.choice(self.n_actions, p=probs)
         action_vec = self.action_vectors[action_idx]
         return action_vec, action_idx
@@ -808,26 +821,47 @@ class Critic:
 class Coordinates:
     def __init__(self, agent, n_cells=493, learning_rate=0.01, lambd=0.9):
         """
-        Learns global X and Y coordinates based on local self-motion.
-        Paper Pages 9-10.
+        # Coordinate Estimation System
+        Paper Pages 8-11.
+
+        ### Default values:
+        - n_cells = **493** (Number of place cells)
+        - learning_rate = **0.01** (Coordinate learning rate)
+        - lambda = **0.9** (Eligibility trace decay rate)
+
+        ## Sources from the paper:
+        ### Cell Count:
+        No specific mention of changing the number of place cells for the coordinate system,
+        so we use the same as the previous Place Cell count: **493**.
+
+        ### Learning Rate:
+        The learning rate is never explicitly specified in the paper, just says this:\n
+        *"Following standard reinforcement learning practice, we use a **fixed
+        learning rate** to avoid slow learning"*\n
+        Assuming a common value of **0.01** here.
+
+        ### Lambda:
+        *"Theoretical arguments suggest that since the terms 
+        Dxt and Dyt are likely to be quite accurate, distant timesteps are
+        useful, and therefore a high value of lambda should make learning fastest (Watkins, 1989).*\n
+        *Simulations confirmed this, and so we set lambda to **0.9**."*
+
         """
         self.agent = agent
         self.n_cells = n_cells
         self.lr = learning_rate
         self.lambd = lambd
         
-        # Two separate networks for X and Y coordinates
         self.weights_x = np.zeros(n_cells)
         self.weights_y = np.zeros(n_cells)
         
         self.trace_x = np.zeros(n_cells)
         self.trace_y = np.zeros(n_cells)
 
-        # Memory of the goal location in the learned coordinate space
-        self.goal_memory = None # Tuple (x_coord, y_coord)
+        # Goal memory will be updated to a 2D Coordinate when set_goal is called
+        self.goal_memory = None
 
     def get_coordinates(self, place_activation):
-        """Returns predicted [X, Y] for current location."""
         x = np.dot(self.weights_x, place_activation)
         y = np.dot(self.weights_y, place_activation)
         return np.array([x, y])
@@ -837,57 +871,44 @@ class Coordinates:
         self.trace_y = np.zeros(self.n_cells)
 
     def update(self, current_activation, next_activation, real_movement_vector):
-        """
-        TD Learning for Coordinates (Eq 11 & 12).
-        The 'reward' here is the actual physical displacement (real_movement_vector).
-        """
+        # Update Traces
+        self.trace_x = self.lambd * self.trace_x + current_activation
+        self.trace_y = self.lambd * self.trace_y + current_activation
+
         # Estimates of current and next positions
         curr_coords = self.get_coordinates(current_activation) # [x, y]
         next_coords = self.get_coordinates(next_activation)    # [x, y]
-        
+
         # Actual self-motion (Ground Truth)
         dx_real = real_movement_vector[0]
         dy_real = real_movement_vector[1]
 
-        # TD Errors for X and Y
-        # delta = Reward + (Discount * Next) - Current
-        # Here Discount is 1.0 (geometry doesn't decay)
+        self.trace_x = np.clip(self.trace_x, -10.0, 10.0)
+        self.trace_y = np.clip(self.trace_y, -10.0, 10.0)
+
         delta_x = -dx_real + next_coords[0] - curr_coords[0]
         delta_y = -dy_real + next_coords[1] - curr_coords[1]
-
-        # Update Traces
-        # The coordinate system uses lambda=0.9 (Page 10)
-        self.trace_x = self.lambd * self.trace_x + current_activation
-        self.trace_y = self.lambd * self.trace_y + current_activation
-
-        # Optional: Clip traces for stability (as discussed)
-        self.trace_x = np.clip(self.trace_x, -5.0, 5.0)
-        self.trace_y = np.clip(self.trace_y, -5.0, 5.0)
 
         # Update Weights
         self.weights_x += self.lr * delta_x * self.trace_x
         self.weights_y += self.lr * delta_y * self.trace_y
 
     def set_goal(self, place_activation):
-        """Memorize the coordinates of the current location as the goal."""
         self.goal_memory = self.get_coordinates(place_activation)
 
     def get_vector_to_goal(self, place_activation):
-        """
-        Calculates direction vector from current estimated position to remembered goal.
-        Returns: normalized vector, or random vector if no goal memory.
-        """
         if self.goal_memory is None:
             # "When there is no goal coordinate in memory... specify random, exploratory actions."
+            # (Page 9, "Using Coordinates to Control Actions" section)
             rnd = np.random.uniform(-1, 1, 2)
-            return rnd / np.linalg.norm(rnd), False # False = Invalid Goal
+            return rnd / np.linalg.norm(rnd), False
         
         curr_coords = self.get_coordinates(place_activation)
         diff = self.goal_memory - curr_coords
         dist = np.linalg.norm(diff)
         
         if dist > 0:
-            return diff / dist, True # True = Valid Goal
+            return diff / dist, True
         else:
             return np.zeros(2), True
         
@@ -959,110 +980,209 @@ class Coordinates:
             plt.show()
 
 
-
-class Coordinate_TD_Agent(TD_Agent):
+class Coordinate_TD_Agent:
     def __init__(self, env, n_cells=493, sigma=0.16, 
-                 actor_lr=0.1, critic_lr=0.01, gamma=0.98, actor_lambda=0.9, critic_lambda=0.9,
-                 coord_lr=0.01, coord_lambda=0.9):
+                 actor_lr=0.1, critic_lr=0.01, coord_lr=0.01,
+                 gamma=0.99, lambd=0.9):
+        """
+        # Coordinate Based Navigation Agent
+        Combines the Actor-Critic architecture with a learned Coordinate System.
+        Paper Pages 8-11.
+
+        ### Default values:
+        - n_cells = **493** (Number of place cells)
+        - sigma = **0.16 m** (Place field width)
+        - actor_lr = **0.1** (Actor learning rate)
+        - critic_lr = **0.01** (Critic learning rate)
+        - coord_lr = **0.01** (Coordinate system learning rate)
+        - gamma = **0.99** (Discount factor)
+        - lambda = **0.9** (Eligibility trace decay rate for Actor, Critic, and Coordinates)
+
+        ## Sources from the paper:
+
+        ### The Coordinate System:
+        *"The coordinate system consists of... a coordinate representation of current position
+        (X and Y)... a goal coordinate memory... and a mechanism which computes the direction
+        to swim."*
+
+        ### The Abstract Action (9th Action):
+        *"Here, there is an additional action cell, a_coord, representing the rat’s preference
+        for the swimming direction offered by the coordinate system... The coordinate action
+        is reinforced by the critic in a similar manner to the other actions."*
+
+        ### Lambda:
+        *"Theoretical arguments suggest that... distant timesteps are useful, and therefore
+        a high value of lambda should make learning fastest... Simulations confirmed this,
+        and so we set lambda to **0.9**."*
+
+        ### Goal Memory:
+        *"When there is no remembered goal coordinate... the controller specifies random,
+        exploratory actions... then the controller does not participate in learning,
+        i.e., a_coord is not updated."*
         
-        # Initialize standard TD Agent components
-        super().__init__(env, n_cells, sigma, actor_lr, critic_lr, gamma, actor_lambda=actor_lambda, critic_lambda=critic_lambda)
+        ### Source: Foster Morris Dayan. (2000)
+        """
         
-        # Override Actor to have 9 actions (8 Directions + 1 Coordinate Action)
-        self.actor = Actor(self, n_cells, n_actions=9)
+        self.env = env
+        self.place_cells = PlaceCells(env, n_cells=n_cells, sigma=sigma)
         
-        # Initialize Coordinate System
-        self.coord_system = Coordinates(self, n_cells, learning_rate=coord_lr, lambd=coord_lambda)
+        # Hyperparameters
+        self.actor_lr = actor_lr
+        self.critic_lr = critic_lr
+        self.gamma = gamma
+        self.lambd = lambd
+        
+        # Critic
+        self.critic = Critic(self, n_cells)
+        
+        # Coordinate System
+        self.coordinates = Coordinates(self, n_cells, learning_rate=coord_lr, lambd=lambd)
+        
+        # Actor
+        # We need 9 output units: 0-7 are fixed directions, 8 is the "Coordinate Action"
+        self.n_actions_total = 9 
+        self.actor_weights = np.zeros((n_cells, self.n_actions_total))
+        self.actor_trace = np.zeros((n_cells, self.n_actions_total))
+        
+        # Fixed vectors for actions 0-7
+        angles = np.linspace(0, 2*np.pi, 8, endpoint=False)
+        self.fixed_action_vectors = np.array([[np.cos(a), np.sin(a)] for a in angles])
+
+    def reset_model(self):
+        self.actor_weights = np.zeros_like(self.actor_weights)
+        self.actor_trace = np.zeros_like(self.actor_trace)
+        self.critic.reset_weights()
+        self.critic.reset_trace()
+        self.coordinates.weights_x = np.zeros(self.place_cells.n_cells)
+        self.coordinates.weights_y = np.zeros(self.place_cells.n_cells)
+        self.coordinates.reset_traces()
+        self.coordinates.goal_memory = None
+
+    def get_action_probabilities(self, place_activation):
+        # Calculate values for all 9 actions
+        action_values = np.dot(place_activation, self.actor_weights)
+        
+        # Softmax (Temperature = 2, same as standard agent)
+        max_av = np.max(action_values)
+        action_values -= max_av
+        e_2av = np.exp(2 * action_values)
+        probs = e_2av / np.sum(e_2av)
+        return probs
+    
+    def display_actor_policy(self, grid_size=20, plt_show=True, title=None):
+        """unlike previous display_policy, this one handles the 9th coordinate action, which
+        depends on the coordinate system, and isn't bound by the 8 fixed directions.
+        """
+        r = self.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        U = np.zeros_like(X)
+        V = np.zeros_like(Y)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                activation = self.place_cells.get_activation(pos)
+                probs = self.get_action_probabilities(activation)
+                best_action_idx = np.argmax(probs)
+                
+                if best_action_idx < 8:
+                    best_action_vec = self.fixed_action_vectors[best_action_idx]
+                else:
+                    coord_vec, _ = self.coordinates.get_vector_to_goal(activation)
+                    best_action_vec = coord_vec
+
+                U[i, j] = best_action_vec[0]
+                V[i, j] = best_action_vec[1]
+
+        plt.quiver(X, Y, U, V, color='blue', alpha=0.7)
+        circle = plt.Circle((0, 0), r, color='blue', fill=False)
+        plt.gca().add_artist(circle)
+
+        platform_pos = self.env.platform_pos
+        platform = plt.Circle(platform_pos, self.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
+        plt.gca().add_artist(platform)
+
+        plt.xlim(-r-0.1, r+0.1)
+        plt.ylim(-r-0.1, r+0.1)
+        if title is not None:
+            plt.title(title)
+        else:
+            plt.title('Coordinate TD Agent Actor Policy Vector Field')
+        plt.gca().set_aspect('equal', adjustable='box')
+        if plt_show:
+            plt.show()
 
     def run_trial(self, mode="DMP", max_steps=2000, learning=True):
-        # DMP Rule: If starting a new problem (Platform moved), goal memory is invalid.
-        # However, the paper says "At certain times... no remembered goal... on DMP, every time the rat... finds it to be moved".
-        # We simulate this by wiping memory if we are in a mode where platform location is unknown until found.
-        # For simplicity in this function: 
-        # If the platform moved physically, the old coordinates point to the WRONG spot. 
-        # The agent must realize the platform is gone.
-        # Implementing the "Interference" mechanic:
-        # We DO NOT wipe goal memory automatically. We let the agent swim to the old goal, 
-        # realize it's not there, and then maybe wipe it?
-        # Actually, Steele & Morris protocol: The rat is placed in the pool.
-        # For this simulation, we will assume:
-        # 1. First trial of a new Day (DMP): Agent might have old memory or None.
-        # 2. If it hits the platform, it Updates the memory.
-        
-        self.env.reset(mode=mode)
-        self.actor.reset_trace()
+        self.actor_trace = np.zeros_like(self.actor_trace)
         self.critic.reset_trace()
-        self.coord_system.reset_traces()
-
+        self.coordinates.reset_traces()
+        self.env.reset(mode=mode)
+        
         steps = 0
         path_length = 0
         done = False
 
-        current_activation = self.place_cells.get_activation(self.env.pos)
-
+        p_coordinate_action = 0
+        
+        curr_act = self.place_cells.get_activation(self.env.pos)
+        
         while not done and steps < max_steps:
-            # 1. Actor Selection
-            # The Actor outputs 9 probs. 
-            # 0-7: Directional. 8: Coordinate Action.
-            probs, _ = self.actor.get_action_probabilities(current_activation)
-            action_idx = np.random.choice(9, p=probs)
-
-            # 2. Resolve Action to Vector
-            valid_coord_action = False
+            coord_vec, valid_goal = self.coordinates.get_vector_to_goal(curr_act)
             
+            probs = self.get_action_probabilities(curr_act)
+            p_coordinate_action += probs[8]
+            
+            action_idx = np.random.choice(self.n_actions_total, p=probs)
+
             if action_idx < 8:
-                # Standard Direction
-                action_vec = self.actor.action_vectors[action_idx]
+                move_vec = self.fixed_action_vectors[action_idx]
             else:
-                # Coordinate Action (Index 8)
-                coord_vec, is_valid = self.coord_system.get_vector_to_goal(current_activation)
-                action_vec = coord_vec
-                valid_coord_action = is_valid
+                move_vec = coord_vec # coordinate system vector
 
-            # 3. Move
             prev_pos = self.env.pos.copy()
-            reward, done, _ = self.env.step(action_vec)
+            reward, done, _ = self.env.step(move_vec)
             
-            # Calculate actual movement for Coordinate Learning
             real_movement = self.env.pos - prev_pos
-            path_length += np.linalg.norm(real_movement)
-
-            # Concussion Protocol (Optional but recommended)
-            #if np.linalg.norm(self.env.pos) >= self.env.radius * 0.98:
-            #    self.actor.reset_trace()
-            #    self.critic.reset_trace()
-            #    # self.coord_system.reset_traces() # Coordinate learning shouldn't necessarily break on walls
-
-            # 4. Update
-            next_activation = self.place_cells.get_activation(self.env.pos)
-
+            dist_moved = np.linalg.norm(real_movement)
+            path_length += dist_moved
+            
+            next_act = self.place_cells.get_activation(self.env.pos)
+            
             if learning:
-                # A. Update Coordinate System (Learns Map)
-                self.coord_system.update(current_activation, next_activation, real_movement)
+                # Coordinate System Update
+                self.coordinates.update(curr_act, next_act, real_movement)
+
+                # TD Critic Update
+                v_curr = self.critic.forward(curr_act)
+                v_next = 0.0 if done else self.critic.forward(next_act)
+                delta = reward + self.gamma * v_next - v_curr
                 
-                # B. Update Actor-Critic (Learns Policy)
-                # Special Case: Page 10 "If... controller specifying random actions... a_coord is not updated"
-                # So if action_idx == 8 and goal memory was None (valid_coord_action is False),
-                # we skip the Actor update for this step (or mask it).
+                # Critic Update
+                self.critic.update(delta, self.critic_lr, curr_act, self.gamma, self.lambd)
                 
-                if action_idx == 8 and not valid_coord_action:
-                    # Do not update Actor weights for the coordinate action
-                    # Still update Critic? Yes, value of state is independent of action validity.
-                    # We can achieve this by passing a flag or manually handling it.
-                    # Simple hack: Temporarily set alpha to 0 for actor update?
-                    pass 
+                # Actor Update
+                self.actor_trace *= (self.gamma * self.lambd)
+                self.actor_trace[:, action_idx] += curr_act
+                
+                # "When there is no remembered goal coordinate... a_coord is not updated."
+                if action_idx == 8 and self.coordinates.goal_memory is None:
+                    update_mask = np.ones(self.n_actions_total)
+                    update_mask[8] = 0.0
+                    self.actor_weights += self.actor_lr * delta * self.actor_trace * update_mask.reshape(1, -1)
                 else:
-                    self.update(current_activation, next_activation, action_idx, reward, done)
+                    self.actor_weights += self.actor_lr * delta * self.actor_trace
 
-                # C. Update Goal Memory on Success
-                if done and reward > 0:
-                    self.coord_system.set_goal(next_activation)
-
-            current_activation = next_activation
+            curr_act = next_act
             steps += 1
-
-        trial_time = steps * self.env.dt
-        return steps, path_length, trial_time, done
+            
+        if done and reward > 0:
+            # if platform was found, set goal to it
+            platform_act = self.place_cells.get_activation(self.env.pos)
+            self.coordinates.set_goal(platform_act)
+            
+        return steps, path_length, steps*self.env.dt, done, p_coordinate_action / steps
     
     
     def run_day(self, mode="RMW", trials_per_day=4):
@@ -1074,7 +1194,7 @@ class Coordinate_TD_Agent(TD_Agent):
         for _ in range(trials_per_day):
             # Pass RMW here so env doesn't move the platform between trials
             # (If mode was DMP, we already set the pos above, so we treat trials as RMW relative to that pos)
-            res = self.run_trial(mode="RMW") 
+            res = self.run_trial(mode="RMW")[:-1]
             results.append(res)
         return results
     
@@ -1125,10 +1245,15 @@ class Coordinate_TD_Agent(TD_Agent):
         for day, day_x_positions in enumerate(day_positions):
             plt.plot(day_x_positions, flat_means[day * trials_per_day:(day + 1) * trials_per_day], 
                     marker='o', color="black")
+            # The paper uses "Standard Error of the Mean" for error bars
+            # SEotM = std / sqrt(N)
+            # "For each data point, the mean and standard error in the mean
+            # are obtained from 1,000 simulation runs."
+            # (Page 7, Fİgure 4 Caption)
             plt.errorbar(
                 day_x_positions,
                 flat_means[day * trials_per_day:(day + 1) * trials_per_day],
-                yerr=flat_stds[day * trials_per_day:(day + 1) * trials_per_day],
+                yerr=flat_stds[day * trials_per_day:(day + 1) * trials_per_day] / np.sqrt(simulation_count),
                 fmt='o',
                 color="black",
                 ecolor="gray",
