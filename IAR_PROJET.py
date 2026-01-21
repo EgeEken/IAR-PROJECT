@@ -1,11 +1,11 @@
 
 
 # |=======================================================|
-# |   PROJET IAR 2025/2026                                |
+# |   PROJET IAR 2025 - 2026                              |
 # |   ANDROIDE/AI2D - Sorbonne University                 |
 # |=======================================================|
-# |   Tarık Ege EKEN - 21110611                           |                              
-# |   Kaan DISLI - 21113004                               |
+# |   Tarik Ege EKEN - **21110611**                       |                              
+# |   Kaan DISLI - **21113004**                           |
 # |=======================================================|
 # |   Benoit GIRARD                                       |                             
 # |=======================================================|
@@ -17,7 +17,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-import random
 
 
 class Environment:
@@ -107,12 +106,15 @@ class Environment:
         angle = np.random.uniform(0, 2 * np.pi)
         return np.array([np.cos(angle), np.sin(angle)]) * self.step_distance
 
-    def reset(self, mode="DMP", start_pos=None):
+    def reset(self, mode="DMP", start_pos=None, platform_pos=None):
         """Resets the environment to a starting position."""
         
         # Set platform position based on mode
         if mode == "DMP":
-            self.set_platform_position() # Random new position
+            if platform_pos is not None:
+                self.set_platform_position(platform_pos)
+            else:
+                self.set_platform_position() # Random new position
         elif mode == "RMW":
             # Position remains in the same location throughout the simulation
             pass
@@ -420,7 +422,9 @@ class PlaceCells:
 
 
 class TD_Agent:
-    def __init__(self, env, n_cells=493, sigma=0.16, actor_lr=0.1, critic_lr=0.01, gamma=0.99, actor_lambda=0.9, critic_lambda=0.9, concussion_amnesia=False):
+    def __init__(self, env, n_cells=493, sigma=0.16, actor_lr=0.1,
+                  critic_lr=0.01, gamma=0.99, actor_lambda=0.9,
+                    critic_lambda=0.9, concussion_amnesia=False):
         """
         # TD Agent (Actor-Critic)
 
@@ -909,7 +913,37 @@ class Coordinates:
         else:
             return np.zeros(2), True
         
-    def display_cell_activity(self, cell_axis, grid_size=100, plt_show=True, show_perceived_target=False):
+    def coordinate_center(self, cell_axis="x"):
+        activation = self.agent.place_cells.get_activation(np.array([0, 0]))
+        if cell_axis == "x":
+            return np.dot(self.weights_x, activation)
+        else:
+            return np.dot(self.weights_y, activation)
+    
+    def coordinate_error(self, cell_axis="x", grid_size=100):
+        c_center = self.coordinate_center(cell_axis=cell_axis)
+        c_error = 0.0
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                activation = self.agent.place_cells.get_activation(pos)
+                if cell_axis == 'x':
+                    Z[i, j] = np.dot(self.weights_x, activation) - c_center
+                    c_error += abs(Z[i, j] - pos[0])
+                else:
+                    Z[i, j] = np.dot(self.weights_y, activation) - c_center
+                    c_error += abs(Z[i, j] - pos[1])
+
+        return c_error / (grid_size * grid_size)
+
+
+    def get_activation_map(self, cell_axis, grid_size=100):
         r = self.agent.env.radius
         x = np.linspace(-r, r, grid_size)
         y = np.linspace(-r, r, grid_size)
@@ -924,6 +958,15 @@ class Coordinates:
                     Z[i, j] = np.dot(self.weights_x, activation)
                 else:
                     Z[i, j] = np.dot(self.weights_y, activation)
+
+        return Z
+        
+    def display_cell_activity(self, cell_axis, grid_size=100, plt_show=True, show_perceived_target=False):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = self.get_activation_map(cell_axis, grid_size=grid_size)
 
         plt.contourf(X, Y, Z, levels=50, cmap='viridis')
 
