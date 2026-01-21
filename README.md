@@ -22,20 +22,29 @@ https://github.com/user-attachments/assets/46d1ac85-3b0e-49ce-8955-02485c480c42
 <img width="1164" height="478" alt="image" src="https://github.com/user-attachments/assets/aff77f28-c953-4581-9dcd-15c76c3b97a1" />
 
 ## Coordinate Cells Learning in RMW (Figure 6)
-### Figure 6a
+### Figures 6a and 6b
 Day 2 Trial 2
 
-<img width="995" height="391" alt="image" src="https://github.com/user-attachments/assets/a94bfdf0-3f3c-47a3-a727-6e1e84cb7d8e" />
-<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/7168a345-36e5-4164-bf50-a8152e2e41b7" />
+<img width="986" height="391" alt="image" src="https://github.com/user-attachments/assets/46c55257-7060-41fb-a4fb-32cc0d610d7e" />
+<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/68351ccc-1b61-40f0-a883-1c16223e7995" />
 
 Day 6 Trial 2
 
-<img width="986" height="391" alt="image" src="https://github.com/user-attachments/assets/43623eca-278d-4a42-9a9f-b248c77a3cfd" />
-<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/b5896fa3-35fc-45d3-beb4-0e83e29d8da4" />
+<img width="986" height="391" alt="image" src="https://github.com/user-attachments/assets/15fcece2-d149-4749-b314-d1870f454e75" />
+<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/cf7febef-0bf8-4487-bb4e-e68c8c5d9d1c" />
 
-## Figure 6e
+### Figure 6c
 
-<img width="846" height="470" alt="image" src="https://github.com/user-attachments/assets/ec0eb952-65ba-4729-bb6e-3b3eebfca4b2" />
+<img width="866" height="470" alt="image" src="https://github.com/user-attachments/assets/5fb2cf50-8041-45b7-ba4d-a3339fbff787" />
+
+### Figure 6d
+
+<img width="855" height="470" alt="image" src="https://github.com/user-attachments/assets/8f2114a1-ea7d-46ea-bef0-e11384f7d3c4" />
+
+### Figure 6e
+
+<img width="846" height="470" alt="image" src="https://github.com/user-attachments/assets/936c5e09-5113-4d09-b85c-25303cb7830a" />
+
 
 ## Coordinate + Actor-Critic System in 7 x RMW + DMP + RMW (Figure 8a)
 <img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/cf785d72-b9e2-4f5e-96c2-84410f87c3e0" />
