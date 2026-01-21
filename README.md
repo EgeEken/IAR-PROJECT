@@ -38,7 +38,7 @@ Day 6 Trial 2
 <img width="846" height="470" alt="image" src="https://github.com/user-attachments/assets/ec0eb952-65ba-4729-bb6e-3b3eebfca4b2" />
 
 ## Coordinate + Actor-Critic System in 7 x RMW + DMP + RMW (Figure 8a)
-<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/58bc36b7-d4e7-4250-b702-397cbbc671e0" />
+<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/cf785d72-b9e2-4f5e-96c2-84410f87c3e0" />
 
 ## Coordinate + Actor-Critic System in 9 x DMP (Figure 8b)
 <img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/ea11407b-2f1d-4bf8-8c39-6492da9e5330" />
