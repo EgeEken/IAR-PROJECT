@@ -8,7 +8,9 @@ https://github.com/user-attachments/assets/46d1ac85-3b0e-49ce-8955-02485c480c42
 <img width="777" height="528" alt="image" src="https://github.com/user-attachments/assets/9b73875b-044d-4291-9f44-249a6ab97ad7" />
 
 ## Actor-Critic System in RMW (Figure 3)
-<img width="1332" height="396" alt="image" src="https://github.com/user-attachments/assets/1a2f8c26-0767-4b6b-9ede-fafa8ab4d707" />
+<img width="1332" height="396" alt="image" src="https://github.com/user-attachments/assets/4dcddc69-1743-4487-a257-2d93b607c183" />
+<img width="1332" height="396" alt="image" src="https://github.com/user-attachments/assets/6fe640b1-b38e-4d49-86c4-6d668936acaa" />
+<img width="1332" height="396" alt="image" src="https://github.com/user-attachments/assets/7e7539de-3f9b-4def-83ca-c3352e87d726" />
 
 ## Actor-Critic System in 7 x RMW + DMP + RMW (Figure 4a)
 <img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/93ce479f-dc30-4af1-84b9-9082fa22a292" />
@@ -20,20 +22,26 @@ https://github.com/user-attachments/assets/46d1ac85-3b0e-49ce-8955-02485c480c42
 <img width="1164" height="478" alt="image" src="https://github.com/user-attachments/assets/aff77f28-c953-4581-9dcd-15c76c3b97a1" />
 
 ## Coordinate Cells Learning in RMW (Figure 6)
-<img width="1155" height="478" alt="image" src="https://github.com/user-attachments/assets/825fc6b8-e123-435c-b1f3-21a201b7b3a9" />
-<img width="1196" height="478" alt="image" src="https://github.com/user-attachments/assets/5baa74a0-c3cd-4779-a942-5c6dcf8b7ff3" />
-<img width="1155" height="478" alt="image" src="https://github.com/user-attachments/assets/89534640-076d-4204-846b-6507c1829e5b" />
-<img width="1196" height="478" alt="image" src="https://github.com/user-attachments/assets/f629a29b-95aa-4115-ad5a-6357f7067b24" />
-### Coordinate Agent not working fully as intended yet, this graph is normally supposed to reach in a few days
-<img width="1156" height="470" alt="image" src="https://github.com/user-attachments/assets/8a2bd8a8-3d49-4c7d-b12e-ea32750aabbb" />
+### Figure 6a
+Day 2 Trial 2
 
+<img width="995" height="391" alt="image" src="https://github.com/user-attachments/assets/a94bfdf0-3f3c-47a3-a727-6e1e84cb7d8e" />
+<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/7168a345-36e5-4164-bf50-a8152e2e41b7" />
+
+Day 6 Trial 2
+
+<img width="986" height="391" alt="image" src="https://github.com/user-attachments/assets/43623eca-278d-4a42-9a9f-b248c77a3cfd" />
+<img width="950" height="391" alt="image" src="https://github.com/user-attachments/assets/b5896fa3-35fc-45d3-beb4-0e83e29d8da4" />
+
+## Figure 6e
+
+<img width="846" height="470" alt="image" src="https://github.com/user-attachments/assets/ec0eb952-65ba-4729-bb6e-3b3eebfca4b2" />
 
 ## Coordinate + Actor-Critic System in 7 x RMW + DMP + RMW (Figure 8a)
-### Not yet properly implemented
-<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/3ec1bb29-805a-4caf-ba64-57c6d6ad9b3a" />
+<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/58bc36b7-d4e7-4250-b702-397cbbc671e0" />
 
 ## Coordinate + Actor-Critic System in 9 x DMP (Figure 8b)
-<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/9a4af637-503d-40d2-bc3c-79e6523ba52a" />
+<img width="996" height="563" alt="image" src="https://github.com/user-attachments/assets/ea11407b-2f1d-4bf8-8c39-6492da9e5330" />
 
 
 
