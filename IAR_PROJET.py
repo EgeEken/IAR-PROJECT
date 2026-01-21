@@ -815,9 +815,6 @@ class Critic:
         if plt_show:
             plt.show()
 
-
-# ==============================================================================
-
 class Coordinates:
     def __init__(self, agent, n_cells=493, learning_rate=0.01, lambd=0.9):
         """
@@ -912,7 +909,7 @@ class Coordinates:
         else:
             return np.zeros(2), True
         
-    def display_cell_activity(self, cell_axis, grid_size=100, plt_show=True):
+    def display_cell_activity(self, cell_axis, grid_size=100, plt_show=True, show_perceived_target=False):
         r = self.agent.env.radius
         x = np.linspace(-r, r, grid_size)
         y = np.linspace(-r, r, grid_size)
@@ -936,6 +933,10 @@ class Coordinates:
         platform_pos = self.agent.env.platform_pos
         platform = plt.Circle(platform_pos, self.agent.env.platform_radius, facecolor='green', alpha=0.7, label='Platform', edgecolor='black')
         plt.gca().add_artist(platform)
+
+        if show_perceived_target and self.goal_memory is not None:
+            perceived_target = plt.Circle(self.goal_memory, 0.05, facecolor='red', alpha=0.6, label='Perceived Target', edgecolor='black')
+            plt.gca().add_artist(perceived_target)
         
         plt.colorbar(label=f'Coordinate Cell ({cell_axis.upper()}) Activity')
         plt.title(f'Coordinate Cell ({cell_axis.upper()}) Activity Map')
@@ -980,10 +981,15 @@ class Coordinates:
             plt.show()
 
 
+
+
 class Coordinate_TD_Agent:
     def __init__(self, env, n_cells=493, sigma=0.16, 
                  actor_lr=0.1, critic_lr=0.01, coord_lr=0.01,
-                 gamma=0.99, lambd=0.9):
+                 gamma=0.99, lambd=0.9, concussion_amnesia=False,
+                 goal_memory_reset_interval=20, coord_action_scale1=1.0, coord_action_scale2=1.0,
+                 coord_action_lr=0.1, panic_radius=1.0
+                 ):
         """
         # Coordinate Based Navigation Agent
         Combines the Actor-Critic architecture with a learned Coordinate System.
@@ -1028,6 +1034,7 @@ class Coordinate_TD_Agent:
         
         # Hyperparameters
         self.actor_lr = actor_lr
+        self.coord_action_lr = coord_action_lr
         self.critic_lr = critic_lr
         self.gamma = gamma
         self.lambd = lambd
@@ -1040,17 +1047,32 @@ class Coordinate_TD_Agent:
         
         # Actor
         # We need 9 output units: 0-7 are fixed directions, 8 is the "Coordinate Action"
-        self.n_actions_total = 9 
-        self.actor_weights = np.zeros((n_cells, self.n_actions_total))
-        self.actor_trace = np.zeros((n_cells, self.n_actions_total))
+        # We need to fix the first 8 weights separately to allow for the 9th action to be learned differently
+        self.n_actions_total = 9
+        self.actor_weights_fixed = np.zeros((n_cells, 8))
+        self.actor_trace_fixed = np.zeros((n_cells, 8))
+
+        # Scalar weights and trace for the coordinate action
+        self.coord_action_weight = 0.0
+        self.coord_action_trace = 0.0
         
         # Fixed vectors for actions 0-7
         angles = np.linspace(0, 2*np.pi, 8, endpoint=False)
         self.fixed_action_vectors = np.array([[np.cos(a), np.sin(a)] for a in angles])
 
+        # Bonus (testing)
+        self.concussion_amnesia = concussion_amnesia
+        self.goal_memory_reset_interval = goal_memory_reset_interval
+        self.goal_memory_reset_timer = self.goal_memory_reset_interval
+        self.coord_action_scale1 = coord_action_scale1
+        self.coord_action_scale2 = coord_action_scale2
+        self.panic_radius = panic_radius
+
     def reset_model(self):
-        self.actor_weights = np.zeros_like(self.actor_weights)
-        self.actor_trace = np.zeros_like(self.actor_trace)
+        self.actor_weights_fixed = np.zeros_like(self.actor_weights_fixed)
+        self.actor_trace_fixed = np.zeros_like(self.actor_trace_fixed)
+        self.coord_action_weight = 0.0
+        self.coord_action_trace = 0.0
         self.critic.reset_weights()
         self.critic.reset_trace()
         self.coordinates.weights_x = np.zeros(self.place_cells.n_cells)
@@ -1058,17 +1080,29 @@ class Coordinate_TD_Agent:
         self.coordinates.reset_traces()
         self.coordinates.goal_memory = None
 
+    def actor_forward(self, place_activation):
+        return np.dot(place_activation, self.actor_weights_fixed)
+
     def get_action_probabilities(self, place_activation):
         # Calculate values for all 9 actions
-        action_values = np.dot(place_activation, self.actor_weights)
-        
-        # Softmax (Temperature = 2, same as standard agent)
+        fixed_values = self.actor_forward(place_activation)
+        coord_value = np.array([self.coord_action_weight * self.coord_action_scale1])
+        action_values = np.concatenate((fixed_values, coord_value))
         max_av = np.max(action_values)
         action_values -= max_av
         e_2av = np.exp(2 * action_values)
         probs = e_2av / np.sum(e_2av)
         return probs
     
+    def select_action(self, place_activation):
+        probs = self.get_action_probabilities(place_activation)
+        action_idx = np.random.choice(self.n_actions_total, p=probs)
+        if action_idx < 8:
+            action_vec = self.fixed_action_vectors[action_idx]
+        else:
+            action_vec, _ = self.coordinates.get_vector_to_goal(place_activation)
+        return action_vec, action_idx, probs[8]
+
     def display_actor_policy(self, grid_size=20, plt_show=True, title=None):
         """unlike previous display_policy, this one handles the 9th coordinate action, which
         depends on the coordinate system, and isn't bound by the 8 fixed directions.
@@ -1114,8 +1148,10 @@ class Coordinate_TD_Agent:
         if plt_show:
             plt.show()
 
+
     def run_trial(self, mode="DMP", max_steps=2000, learning=True):
-        self.actor_trace = np.zeros_like(self.actor_trace)
+        self.actor_trace_fixed = np.zeros_like(self.actor_trace_fixed)
+        self.coord_action_trace = 0.0
         self.critic.reset_trace()
         self.coordinates.reset_traces()
         self.env.reset(mode=mode)
@@ -1126,27 +1162,37 @@ class Coordinate_TD_Agent:
 
         p_coordinate_action = 0
         
+        self.goal_memory_reset_timer = self.goal_memory_reset_interval
+
         curr_act = self.place_cells.get_activation(self.env.pos)
         
         while not done and steps < max_steps:
-            coord_vec, valid_goal = self.coordinates.get_vector_to_goal(curr_act)
-            
-            probs = self.get_action_probabilities(curr_act)
-            p_coordinate_action += probs[8]
-            
-            action_idx = np.random.choice(self.n_actions_total, p=probs)
+            move_vec, action_idx, p_coordinate_action_step = self.select_action(curr_act)
+            p_coordinate_action += p_coordinate_action_step
 
-            if action_idx < 8:
-                move_vec = self.fixed_action_vectors[action_idx]
-            else:
-                move_vec = coord_vec # coordinate system vector
+            if self.coordinates.goal_memory is not None:
+                curr_coords = self.coordinates.get_coordinates(curr_act)
+                goal_coords = self.coordinates.goal_memory
+                dist_to_goal = np.linalg.norm(goal_coords - curr_coords)
+                if dist_to_goal <= self.env.platform_radius * self.panic_radius:
+                    #if self.goal_memory_reset_timer == self.goal_memory_reset_interval:
+                        #print(f"Reached memorized goal but not done, starting goal memory reset countdown.")
+                    self.goal_memory_reset_timer -= 1
+                    #print(f"Goal memory reset timer: {self.goal_memory_reset_timer}")
+                    if self.goal_memory_reset_timer <= 0:
+                        #print(f"Goal memory reset timer elapsed, clearing goal memory.")
+                        #self.env.display()
+                        # We're at the goal but not done, so clearly the platform must have changed position
+                        self.coordinates.goal_memory = None
+                        # Random exploratory action from old platform position
+                        action_idx = np.random.randint(0, 8)
+                        move_vec = self.fixed_action_vectors[action_idx]
 
             prev_pos = self.env.pos.copy()
-            reward, done, _ = self.env.step(move_vec)
+            reward, done, collision = self.env.step(move_vec)
             
             real_movement = self.env.pos - prev_pos
-            dist_moved = np.linalg.norm(real_movement)
-            path_length += dist_moved
+            path_length += np.linalg.norm(real_movement)
             
             next_act = self.place_cells.get_activation(self.env.pos)
             
@@ -1163,16 +1209,32 @@ class Coordinate_TD_Agent:
                 self.critic.update(delta, self.critic_lr, curr_act, self.gamma, self.lambd)
                 
                 # Actor Update
-                self.actor_trace *= (self.gamma * self.lambd)
-                self.actor_trace[:, action_idx] += curr_act
+                if collision and self.concussion_amnesia:
+                    self.actor_trace_fixed = np.zeros_like(self.actor_trace_fixed)
+                    self.coord_action_trace = 0.0
+                    self.critic.reset_trace()
+                else:
+                    self.actor_trace_fixed *= (self.gamma * self.lambd)
+                    self.coord_action_trace *= (self.gamma * self.lambd)
                 
                 # "When there is no remembered goal coordinate... a_coord is not updated."
-                if action_idx == 8 and self.coordinates.goal_memory is None:
-                    update_mask = np.ones(self.n_actions_total)
-                    update_mask[8] = 0.0
-                    self.actor_weights += self.actor_lr * delta * self.actor_trace * update_mask.reshape(1, -1)
-                else:
-                    self.actor_weights += self.actor_lr * delta * self.actor_trace
+                if action_idx < 8:
+                    self.actor_trace_fixed[:, action_idx] += curr_act
+                elif self.coordinates.goal_memory is not None:
+                    #self.coord_action_trace += 1.0
+                    #print(np.sum(curr_act)) # for debugging, gives values around 15-30 which is too big and breaks the learning
+                    #self.coord_action_trace += np.sum(curr_act)
+                    #print(np.mean(curr_act))  # for debugging, gives values around 0.03-0.06 which is too small and breaks learning
+                    #self.coord_action_trace += np.mean(curr_act)
+                    self.coord_action_trace += self.coord_action_scale2
+
+                #self.actor_trace_fixed = np.clip(self.actor_trace_fixed, -10.0, 10.0)
+                #self.coord_action_trace = np.clip(self.coord_action_trace, -10.0, 10.0)
+
+                self.actor_weights_fixed += self.actor_lr * delta * self.actor_trace_fixed
+
+                if self.coordinates.goal_memory is not None:
+                    self.coord_action_weight += self.coord_action_lr * delta * self.coord_action_trace
 
             curr_act = next_act
             steps += 1
@@ -1181,6 +1243,7 @@ class Coordinate_TD_Agent:
             # if platform was found, set goal to it
             platform_act = self.place_cells.get_activation(self.env.pos)
             self.coordinates.set_goal(platform_act)
+            #print(f"Found platform at position {self.env.pos} in {steps} steps, setting goal memory.")
             
         return steps, path_length, steps*self.env.dt, done, p_coordinate_action / steps
     
@@ -1207,11 +1270,18 @@ class Coordinate_TD_Agent:
             all_results.append(day_results)
         return np.array(all_results)
     
-    def run_figure8(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4):
+    def run_figure8(self, simulation_count=1, trials_by_day=["RMW"]*9, trials_per_day=4, verbose=False):
         all_simulation_results = []
-        for _ in range(simulation_count):
+        timer = time.time()
+        for i in range(simulation_count):
+            if verbose and simulation_count > 1:
+                if simulation_count < 6 or (i % (simulation_count // 5) == 0):
+                    print(f"Running simulation {i+1}/{simulation_count}...", end=' | ')
             sim_results = self.run_experiment(trials_by_day=trials_by_day, trials_per_day=trials_per_day)
             all_simulation_results.append(sim_results)
+            if verbose and simulation_count > 1:
+                if simulation_count < 6 or (i % (simulation_count // 5) == 0):
+                    print(f"Time so far: {time.time() - timer:.2f} seconds")
         return all_simulation_results
 
     def display_figure8(self, all_simulation_results, plt_show=True, title=None):
@@ -1284,24 +1354,3 @@ class Coordinate_TD_Agent:
             plt.title(f"Figure 8: Coordinate System + Actor-Critic Learning Curve\n({simulation_count} Simulations, {trials_per_day} Trials per day, {day_count} Days)")
         if plt_show:
             plt.show()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
