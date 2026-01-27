@@ -2,7 +2,7 @@
 
 # |=======================================================|
 # |   PROJET IAR 2025 - 2026                              |
-# |   ANDROIDE/AI2D - Sorbonne University                 |
+# |   ANDROIDE/AI2D - Sorbonne Université                 |
 # |=======================================================|
 # |   Tarik Ege EKEN - **21110611**                       |                              
 # |   Kaan DISLI - **21113004**                           |
@@ -16,6 +16,7 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import LightSource
 import time
 
 
@@ -389,6 +390,64 @@ class PlaceCells:
         plt.xlim(-self.env.radius-0.1, self.env.radius+0.1)
         plt.ylim(-self.env.radius-0.1, self.env.radius+0.1)
         plt.gca().set_aspect('equal', adjustable='box')
+        if plt_show:
+            plt.show()
+
+    def display_activation_field_3D(self, place_cell_id, grid_size=100, azdeg=315, altdeg=45, title=None,plt_show=True):
+        r = self.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                activation = self.get_activation(pos)
+                Z[i, j] = activation[place_cell_id]
+
+        mask = X**2 + Y**2 <= r**2
+        Z_masked = np.where(mask, Z, np.nan)
+
+        ls = LightSource(azdeg=azdeg, altdeg=altdeg)
+        cmap = plt.get_cmap('viridis')
+        shaded = ls.shade(Z_masked, cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1), vert_exag=1.0, blend_mode='soft')
+        
+        fig = plt.figure(figsize=(8, 6))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.plot_surface(
+            X,
+            Y,
+            Z_masked,
+            facecolors=shaded,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        # Pool boundary on the base plane for context
+        theta = np.linspace(0, 2 * np.pi, 200)
+        base_z = np.min(Z_masked) - 0.02
+        ax.plot(r * np.cos(theta), r * np.sin(theta), base_z, color='blue', lw=1.5)
+
+        mappable = plt.cm.ScalarMappable(cmap=cmap)
+        mappable.set_array(Z_masked)
+
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(f'Activation Field of Place Cell {place_cell_id}')
+        ax.set_xlim(-r, r)
+        ax.set_ylim(-r, r)
+        ax.set_zlim(0, 1)
+        ax.set_xticks([-r, 0, r])
+        ax.set_yticks([-r, 0, r])
+        ax.set_zticks([0, 0.5, 1])
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel('Activation Level')
         if plt_show:
             plt.show()
 
@@ -819,6 +878,62 @@ class Critic:
         if plt_show:
             plt.show()
 
+    def display_value_function_3D(self, grid_size=100, azdeg=315, altdeg=45, title=None, plt_show=True):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                activation = self.agent.place_cells.get_activation(pos)
+                Z[i, j] = self.forward(activation)
+
+        mask = X**2 + Y**2 <= r**2  # inside circle
+        Z_masked = np.where(mask, Z, np.nan)
+
+        ls = LightSource(azdeg=azdeg, altdeg=altdeg)
+        cmap = plt.get_cmap('viridis')
+        shaded = ls.shade(np.nan_to_num(Z_masked, nan=np.nanmin(Z)), cmap=cmap, norm=plt.Normalize(vmin=0, vmax=1), vert_exag=1.0, blend_mode='soft')
+
+        ax = plt.gca()  # Get current axes (should already be 3D)
+        surface = ax.plot_surface(
+            X,
+            Y,
+            Z_masked,
+            facecolors=shaded,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        theta = np.linspace(0, 2 * np.pi, 200)
+        base_z = np.nanmin(Z_masked) - 0.02
+        ax.plot(r * np.cos(theta), r * np.sin(theta), base_z, color='blue', lw=1.5)
+
+        mappable = plt.cm.ScalarMappable(cmap=cmap)
+        mappable.set_array(Z_masked)
+
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(f'Critic Value Function')
+        ax.set_xlim(-r, r)
+        ax.set_ylim(-r, r)
+        ax.set_zlim(0, 1)
+        ax.set_xticks([-r, 0, r])
+        ax.set_yticks([-r, 0, r])
+        ax.set_zticks([0, 0.5, 1])
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel('C(p)')
+        if plt_show:
+            plt.show()
+
 class Coordinates:
     def __init__(self, agent, n_cells=493, learning_rate=0.01, lambd=0.9):
         """
@@ -990,6 +1105,56 @@ class Coordinates:
         if plt_show:
             plt.show()
 
+    def display_cell_activity_3D(self, cell_axis, grid_size=100, azdeg=315, altdeg=45, title=None, plt_show=True):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = self.get_activation_map(cell_axis, grid_size=grid_size)
+
+        mask = X**2 + Y**2 <= r**2  # inside circle
+        Z_masked = np.where(mask, Z, np.nan)
+
+        ls = LightSource(azdeg=azdeg, altdeg=altdeg)
+        cmap = plt.get_cmap('viridis')
+        shaded = ls.shade(np.nan_to_num(Z_masked, nan=np.nanmin(Z)), cmap=cmap, norm=plt.Normalize(vmin=-1, vmax=1), vert_exag=1.0, blend_mode='soft')
+
+        ax = plt.gca()  # Get current axes (should already be 3D)
+        surface = ax.plot_surface(
+            X,
+            Y,
+            Z_masked,
+            facecolors=shaded,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        theta = np.linspace(0, 2 * np.pi, 200)
+        base_z = np.nanmin(Z_masked) - 0.02
+        ax.plot(r * np.cos(theta), r * np.sin(theta), base_z, color='blue', lw=1.5)
+
+        mappable = plt.cm.ScalarMappable(cmap=cmap)
+        mappable.set_array(Z_masked)
+
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(f'Coordinate Cell ({cell_axis.upper()}) Activity')
+        ax.set_xlim(-r, r)
+        ax.set_ylim(-r, r)
+        ax.set_zlim(-1, 1)
+        ax.set_xticks([-r, 0, r])
+        ax.set_yticks([-r, 0, r])
+        ax.set_zticks([-1, 0, 1])
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel(f'{cell_axis.upper()} Cell Activity')
+        if plt_show:
+            plt.show()
+
     def display_ideal_cell_activity(self, cell_axis, grid_size=100, plt_show=True):
         r = self.agent.env.radius
         x = np.linspace(-r, r, grid_size)
@@ -1020,6 +1185,62 @@ class Coordinates:
         plt.ylim(-r-0.1, r+0.1)
         plt.clim(-1, 1)
         plt.gca().set_aspect('equal', adjustable='box')
+        if plt_show:
+            plt.show()
+
+    def display_ideal_cell_activity_3D(self, cell_axis, grid_size=100, azdeg=315, altdeg=45, title=None, plt_show=True):
+        r = self.agent.env.radius
+        x = np.linspace(-r, r, grid_size)
+        y = np.linspace(-r, r, grid_size)
+        X, Y = np.meshgrid(x, y)
+        Z = np.zeros_like(X)
+
+        for i in range(grid_size):
+            for j in range(grid_size):
+                pos = np.array([X[i, j], Y[i, j]])
+                if cell_axis == 'x':
+                    Z[i, j] = pos[0]
+                else:
+                    Z[i, j] = pos[1]
+
+        mask = X**2 + Y**2 <= r**2  # inside circle
+        Z_masked = np.where(mask, Z, np.nan)
+
+        ls = LightSource(azdeg=azdeg, altdeg=altdeg)
+        cmap = plt.get_cmap('viridis')
+        shaded = ls.shade(np.nan_to_num(Z_masked, nan=np.nanmin(Z)), cmap=cmap, norm=plt.Normalize(vmin=-1, vmax=1), vert_exag=1.0, blend_mode='soft')
+
+        ax = plt.gca()  # Get current axes (should already be 3D)
+        surface = ax.plot_surface(
+            X,
+            Y,
+            Z_masked,
+            facecolors=shaded,
+            rstride=1,
+            cstride=1,
+            linewidth=0,
+            antialiased=False,
+            shade=False
+        )
+
+        theta = np.linspace(0, 2 * np.pi, 200)
+        base_z = np.nanmin(Z_masked) - 0.02
+        ax.plot(r * np.cos(theta), r * np.sin(theta), base_z, color='blue', lw=1.5)
+        mappable = plt.cm.ScalarMappable(cmap=cmap)
+        mappable.set_array(Z_masked)
+        if title is not None:
+            ax.set_title(title)
+        else:
+            ax.set_title(f'Ideal Coordinate Cell ({cell_axis.upper()}) Activity')
+        ax.set_xlim(-r, r)
+        ax.set_ylim(-r, r)
+        ax.set_zlim(-1, 1)
+        ax.set_xticks([-r, 0, r])
+        ax.set_yticks([-r, 0, r])
+        ax.set_zticks([-1, 0, 1])
+        ax.set_xlabel('X Position (m)')
+        ax.set_ylabel('Y Position (m)')
+        ax.set_zlabel(f'Ideal {cell_axis.upper()} Activity')
         if plt_show:
             plt.show()
 
