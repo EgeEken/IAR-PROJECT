@@ -1,9 +1,13 @@
 # IAR PROJECT
 Final project for my IAR (AI for Robotics) class
 
-https://github.com/user-attachments/assets/46d1ac85-3b0e-49ce-8955-02485c480c42
+Replicating the findings of the paper *Models of Hippocampally Dependent Navigation, Using The Temporal Difference Learning Rule (2000)*
 
 ---
+
+## Environment
+https://github.com/user-attachments/assets/46d1ac85-3b0e-49ce-8955-02485c480c42
+
 ## Place Cells (Figure 2.b)
 <img width="734" height="528" alt="image" src="https://github.com/user-attachments/assets/a84828ea-3d9d-43c1-8002-7e6d45bc45b0" />
 <img width="498" height="512" alt="image" src="https://github.com/user-attachments/assets/842bc05e-ddc5-4877-b954-c09d7e150f07" />
